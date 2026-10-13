@@ -8,4 +8,4 @@ from ._index import cache_dir, load_index
 from .reader import SlidebookReader
 
 __all__ = ["SlidebookReader", "cache_dir", "load_index"]
-__version__ = "0.1.1"
+__version__ = "0.1.2"

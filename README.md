@@ -18,6 +18,7 @@ built for files far larger than RAM on slow storage (the motivating case: a
   block, which path was taken.
 - **Instant later opens.** The parsed index is cached locally, outside the
   data folder (override with `TANOA_SLD_CACHE_DIR`).
+- **No preview read** (`preview_available = False`): SlideBook has no reduced-resolution levels, so tanoa shows "Preview not available for this format" rather than reading full planes.
 - **Memory-bounded streaming to OME-Zarr.** Channels are lazy dask arrays of
   ~16 MiB row bands. Each band is one positioned read, so reads can run in
   parallel over the network. tanoa's writer streams them under its

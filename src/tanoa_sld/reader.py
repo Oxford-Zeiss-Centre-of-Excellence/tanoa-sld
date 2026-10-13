@@ -148,6 +148,11 @@ class SlidebookReader:
     name = "tanoa-sld"
     extensions = (".sld", ".spl")
     self_describing = True
+    #: SlideBook stores no reduced-resolution levels, so any preview means
+    #: full-plane reads from a file that may be hundreds of GB on a network
+    #: drive; tanoa shows "Preview not available for this format" instead
+    #: (`read_preview` below stays for direct callers).
+    preview_available = False
 
     def __init__(self) -> None:
         self._indexes: "dict[tuple, SldIndex]" = {}
