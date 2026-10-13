@@ -206,6 +206,7 @@ class SlidebookFile:
         self._geometry: "tuple[int, int] | None" = None
         self._channels_seen = self._z_seen = 0
         self._last_counts = (1, 1)
+        self._last_block_length = 0
         #: (pixel block offset, "predicted" | "full scan") per block found.
         self.scan_log: "list[tuple[int, str]]" = []
         self._progress = progress
@@ -276,13 +277,18 @@ class SlidebookFile:
             inp.seek(here)
 
     def _guesses(self) -> "list[int]":
+        # The previous block's measured length first: a time series repeats
+        # one block shape, so only its first block ever needs a full scan.
+        # Real files showed why this matters -- their 'i' blocks did not hold
+        # the image size where the Java reads it (geometry parsed as 1x1).
+        guesses = [self._last_block_length] if self._last_block_length else []
         if self._geometry is None:
-            return []
+            return guesses
         c = self._channels_seen or self._last_counts[0]
         z = self._z_seen or self._last_counts[1]
         self._last_counts = (c, z)
         plane = self._geometry[0] * self._geometry[1] * 2
-        return [plane, c * plane, z * plane, c * z * plane]
+        return guesses + [plane, c * plane, z * plane, c * z * plane]
 
     # -- int helpers that honour the overflow switch ------------------------
 
@@ -561,6 +567,8 @@ class SlidebookFile:
                             res = scan_fast(self._scan_fh, fp, inp.length(), on_chunk=self._checkpoint)
                         if self._predict:
                             self._channels_seen = self._z_seen = 0  # counts for the next block
+                            if res.found and res.pointer > fp:
+                                self._last_block_length = res.pointer - fp
                         inp.seek(res.pointer)
                         if res.found and (not res.hi_family or res.is_i):
                             self.pixelOffsets.pop()
