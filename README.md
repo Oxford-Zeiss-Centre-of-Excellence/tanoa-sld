@@ -14,7 +14,7 @@ built for files far larger than RAM on slow storage (the motivating case: a
   this reader predicts the end from the block geometry and checks one small
   window there. It falls back to an exact scan (32 MiB prefetched reads) only
   where the prediction does not confirm. `TANOA_SLD_EXACT_INDEX=1` forces
-  the exact scan. `python -m tanoa_sld.inspect FILE.sld` shows, block by
+  the exact scan. `pixi run tanoa backends run tanoa_sld.inspect FILE.sld` shows, block by
   block, which path was taken.
 - **Instant later opens.** The parsed index is cached locally, outside the
   data folder (override with `TANOA_SLD_CACHE_DIR`).
