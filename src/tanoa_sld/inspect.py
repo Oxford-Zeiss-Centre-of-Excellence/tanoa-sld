@@ -65,6 +65,21 @@ def dump(path: str) -> None:
                 print(f"  PIXELS (or an annotation) start @{pos:,} -- first bytes:")
                 print(_hex(block[:64], pos, rows=4))
                 break
+        # The header may hold 8-byte file offsets (a real SlideBook header
+        # did: three values pointing into the file's last ~660 MB). Follow
+        # each one and dump what is there -- still metadata only.
+        fh.seek(0)
+        header = fh.read(4096)
+        seen = set()
+        print("== 8-byte offsets found in the header, and what they point at:")
+        for k in range(8, len(header) - 7):
+            value = struct.unpack_from(fmt + "q", header, k)[0]
+            if 1_000_000 <= value < size and value not in seen and len(seen) < 12:
+                seen.add(value)
+                fh.seek(value)
+                target = fh.read(1024)
+                print(f"  header+{k}: offset {value:,} ({size - value:,} bytes before EOF)")
+                print(_hex(target, value, rows=32))
         print(f"== typed blocks in the last {_TAIL // (1024 * 1024)} MB (pixel blocks end where these begin):")
         start = max(0, size - _TAIL)
         fh.seek(start)
