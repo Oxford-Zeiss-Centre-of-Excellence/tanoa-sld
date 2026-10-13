@@ -1,0 +1,32 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "tanoa-sld"
+version = "0.1.0"
+description = "3i SlideBook (.sld) reader for tanoa: a Python port of Bio-Formats' SlidebookReader with a cached index and chunked, memory-bounded reads."
+readme = "README.md"
+license = "GPL-2.0-or-later"
+license-files = ["LICENSE"]
+requires-python = ">=3.10"
+# tanoa's reader SOP (docs/writing-a-reader.md, R1/R2): numpy and dask are
+# always present in a tanoa install -- declared without any bound, and tanoa
+# itself is never a runtime dependency (only imported lazily, inside probe).
+dependencies = ["numpy", "dask"]
+
+[project.urls]
+Repository = "https://github.com/Oxford-Zeiss-Centre-of-Excellence/tanoa-sld"
+
+[project.entry-points."tanoa.readers"]
+tanoa-sld = "tanoa_sld.reader:SlidebookReader"
+
+[project.optional-dependencies]
+test = ["pytest>=8.0", "zarr>=3"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = ["bioformats: needs a JVM + bffile (tanoa's bioformats-dev environment)"]
