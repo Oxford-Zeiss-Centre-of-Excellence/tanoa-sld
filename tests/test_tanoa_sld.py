@@ -62,3 +62,16 @@ def test_reader_round_trip_and_cache(tmp_path, monkeypatch):
                 np.testing.assert_array_equal(got[0, zz], np.frombuffer(raw, "<u2").reshape(y, x))
     assert SlidebookReader()._index(path).from_cache  # a fresh reader: loaded, not re-scanned
     assert check_reader(SlidebookReader(), [path]).ok
+
+
+@pytest.mark.parametrize("seed", [0, 5, 7, 9, 11, 12])
+def test_predicted_index_equals_the_exact_scan(tmp_path, seed):
+    """The metadata-only index (no pixel reads) must reach the same layout
+    as the full scan on every file the port accepts."""
+    from tanoa_sld._slidebook import SlidebookFile
+
+    path = syn.random_file(tmp_path / "f.sld", seed)
+    exact, predicted = SlidebookFile(path), SlidebookFile(path, predict=True)
+    assert [vars(m) for m in exact.core] == [vars(m) for m in predicted.core]
+    assert exact.planeOffset == predicted.planeOffset
+    assert any(how == "predicted" for _, how in predicted.scan_log)

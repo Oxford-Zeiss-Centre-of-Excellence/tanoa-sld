@@ -174,3 +174,33 @@ def open_for_scan(path: "str | os.PathLike") -> BinaryIO:
     # Unbuffered: every read here is already large, and Python's own 8 KB
     # buffer would only add a copy.
     return open(path, "rb", buffering=0)  # noqa: SIM115
+
+
+def scan_predicted(
+    fh: BinaryIO, fp: int, length: int, guesses: "list[int]", *, window: int = 64 * 1024,
+) -> "ScanResult | None":
+    """Look for the block's end marker only where it is expected, without
+    reading the pixel data before it: a small window at each guessed block
+    length (smallest first). Returns None when no guess is confirmed, and the
+    caller then falls back to the exact `scan_fast`.
+
+    Agrees with the Java scan whenever the pixel data itself contains no
+    marker-like byte pattern before the real end -- the Java would stop at
+    such a pattern, this does not look there. For data up to 14 bits that
+    pattern cannot occur (it needs 0x49/0x4D in a high byte, i.e. values
+    >= 0x4900); `TANOA_SLD_EXACT_INDEX=1` forces the exact scan regardless.
+    """
+    for guess in sorted({g for g in guesses if g >= 1024}):
+        start = fp + guess - 64
+        if start + 6 > length:
+            continue
+        fh.seek(start)
+        data = fh.read(window)
+        for m in _CANDIDATE.finditer(data):
+            a = start + m.start()
+            if not _scanned(a, fp, length):
+                continue
+            hi = m.group(1) is not None
+            pair = m.group(1) or m.group(2)
+            return ScanResult(True, hi, hi and b"i" in pair, _pointer_for(a, fp))
+    return None

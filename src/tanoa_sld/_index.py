@@ -31,7 +31,7 @@ from typing import Any
 __all__ = ["INDEX_VERSION", "SeriesIndex", "SldIndex", "cache_dir", "load_index"]
 
 #: Bump whenever the parse (or the port it comes from) changes what it returns.
-INDEX_VERSION = 1
+INDEX_VERSION = 2
 
 CACHE_DIR_ENV_VAR = "TANOA_SLD_CACHE_DIR"
 
@@ -115,7 +115,8 @@ def build_index(path: Path, *, progress: Any = None, cancel: Any = None) -> SldI
     from ._slidebook import SlidebookFile
 
     started = time.perf_counter()
-    f = SlidebookFile(path, progress=progress, cancel=cancel)
+    exact = os.environ.get("TANOA_SLD_EXACT_INDEX", "").strip() not in ("", "0", "false")
+    f = SlidebookFile(path, progress=progress, cancel=cancel, predict=not exact)
     try:
         series = []
         for s, ms in enumerate(f.core):

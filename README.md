@@ -9,9 +9,13 @@ built for files far larger than RAM on slow storage (the motivating case: a
   computes plane offsets with 32-bit `int` arithmetic, which wraps for any
   series over 2 GiB and silently reads the wrong plane. This port uses 64-bit
   offsets (`java_int_overflow=True` restores the Java behaviour for testing).
-- **Fast first open.** SlideBook keeps no index, so the first open must read
-  to the end of every pixel block. That read uses 32 MiB prefetched requests
-  rather than Bio-Formats' 8 KB ones, with an identical result.
+- **Metadata-only open.** SlideBook keeps no index. Bio-Formats finds each
+  pixel block's end by reading the whole block (hours for a 388 GB file);
+  this reader predicts the end from the block geometry and checks one small
+  window there. It falls back to an exact scan (32 MiB prefetched reads) only
+  where the prediction does not confirm. `TANOA_SLD_EXACT_INDEX=1` forces
+  the exact scan. `python -m tanoa_sld.inspect FILE.sld` shows, block by
+  block, which path was taken.
 - **Instant later opens.** The parsed index is cached locally, outside the
   data folder (override with `TANOA_SLD_CACHE_DIR`).
 - **Memory-bounded streaming to OME-Zarr.** Channels are lazy dask arrays of

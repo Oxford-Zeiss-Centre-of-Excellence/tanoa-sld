@@ -63,7 +63,7 @@ from pathlib import Path
 from typing import Any
 
 from ._jstream import JavaEOFError, RandomAccessInputStream
-from ._scan import open_for_scan, scan_fast, scan_reference
+from ._scan import open_for_scan, scan_fast, scan_predicted, scan_reference
 
 __all__ = ["CoreMetadata", "ScanCancelled", "SlidebookFile", "is_this_type"]
 
@@ -192,12 +192,22 @@ class SlidebookFile:
 
     def __init__(
         self, path: "str | Path", *, java_int_overflow: bool = False, reference_scan: bool = False,
-        progress: "Any | None" = None, cancel: "Any | None" = None,
+        progress: "Any | None" = None, cancel: "Any | None" = None, predict: bool = False,
+        trace: "Any | None" = None,
     ) -> None:
         """`progress(fraction)` is called (throttled) during the scan;
         `cancel` is anything with `is_set()` (a threading.Event) -- once set,
         the scan stops at its next checkpoint with `ScanCancelled`."""
         self.path = str(path)
+        self._trace = trace  # trace(message) -- `python -m tanoa_sld.inspect`
+        self._predict = predict and not reference_scan
+        # Geometry seen so far in the first pass, for predicting where the
+        # next pixel block ends (see `_scan.scan_predicted`). Not in the Java.
+        self._geometry: "tuple[int, int] | None" = None
+        self._channels_seen = self._z_seen = 0
+        self._last_counts = (1, 1)
+        #: (pixel block offset, "predicted" | "full scan") per block found.
+        self.scan_log: "list[tuple[int, str]]" = []
         self._progress = progress
         self._cancel = cancel
         self._last_report = 0.0
@@ -222,6 +232,57 @@ class SlidebookFile:
                 self._last_report = now
                 length = self.input.length() or 1
                 self._progress(min(1.0, position / length))
+
+    # -- predicted index (not in the Java) -----------------------------------
+
+    def _note_geometry(self, block_offset: int) -> None:
+        """Peek at a metadata block the first pass just found, parsing each of
+        its 128-byte sub-blocks the way the Java's second pass does (type =
+        first non-zero short; 'i' carries X/Y, 'u' counts Z), without moving
+        the main stream."""
+        inp = self.input
+        here = inp.getFilePointer()
+        try:
+            inp.seek(block_offset + 6)
+            block_len = inp.readShort()
+            block_len = max(128, min(block_len if block_len > 0 else 128, 64 * 1024))
+            fmt = "<" if inp.isLittleEndian() else ">"
+            self._scan_fh.seek(block_offset)
+            raw = self._scan_fh.read(block_len + 128)
+            for q in range(0, block_len, 128):
+                sub = raw[q:q + 128]
+                n, p = 0, 0
+                while n == 0 and p + 2 <= len(sub):
+                    n = struct.unpack_from(fmt + "H", sub, p)[0]
+                    p += 2
+                if n == ord("i") and p + 90 <= len(raw) - q:
+                    x, y, check_x, check_y, div = struct.unpack_from(fmt + "hhhhh", raw, q + p + 78)
+                    if x > 0 and y > 0:
+                        if check_x == check_y:
+                            x = _div(x, 1 if div == 0 else div)
+                            div2 = struct.unpack_from(fmt + "h", raw, q + p + 88)[0]
+                            y = _div(y, 1 if div2 == 0 else div2)
+                        if x > 0 and y > 0:
+                            self._geometry = (x, y)
+                    self._channels_seen += 1
+                elif n == ord("u"):
+                    self._z_seen += 1
+                if self._trace is not None and 0 < n < 0x80:
+                    self._trace(f"  metadata @{block_offset + q:>14,}  type {chr(n)!r}"
+                                + (f"  geometry={self._geometry}" if n == ord("i") else ""))
+        except (JavaEOFError, struct.error, OSError):
+            pass
+        finally:
+            inp.seek(here)
+
+    def _guesses(self) -> "list[int]":
+        if self._geometry is None:
+            return []
+        c = self._channels_seen or self._last_counts[0]
+        z = self._z_seen or self._last_counts[1]
+        self._last_counts = (c, z)
+        plane = self._geometry[0] * self._geometry[1] * 2
+        return [plane, c * plane, z * plane, c * z * plane]
 
     # -- int helpers that honour the overflow switch ------------------------
 
@@ -403,6 +464,8 @@ class SlidebookFile:
             checkTwo = inp.read()
             if (checkOne == ord("I") and checkTwo == ord("I")) or (checkOne == ord("M") and checkTwo == ord("M")):
                 self.metadataOffsets.append(inp.getFilePointer() - 6)
+                if self._predict:
+                    self._note_geometry(inp.getFilePointer() - 6)
                 inp.skipBytes(inp.readShort() - 8)
             elif checkOne == -1 and checkTwo == -1:
                 foundBlock = False
@@ -481,11 +544,23 @@ class SlidebookFile:
                         # Java 336-374: find where this pixel block ends. Same
                         # answer either way; `scan_fast` uses large prefetched
                         # reads instead of 8 KB ones (see _scan.py).
-                        scan = scan_reference if self._reference_scan else scan_fast
-                        if self._reference_scan:
-                            res = scan(self._scan_fh, fp, inp.length())
-                        else:
-                            res = scan(self._scan_fh, fp, inp.length(), on_chunk=self._checkpoint)
+                        res = None
+                        if self._predict:
+                            guesses = self._guesses()
+                            res = scan_predicted(self._scan_fh, fp, inp.length(), guesses)
+                            self.scan_log.append((fp, "predicted" if res is not None else "full scan"))
+                            if self._trace is not None:
+                                self._trace(
+                                    f"PIXELS   @{fp:>14,}  guesses={guesses or 'none (no geometry yet)'}  -> "
+                                    + (f"end found at {res.pointer:,} WITHOUT reading the block" if res is not None
+                                       else "no marker at any guess: FULL SCAN of this block (slow)")
+                                )
+                        if res is None and self._reference_scan:
+                            res = scan_reference(self._scan_fh, fp, inp.length())
+                        elif res is None:
+                            res = scan_fast(self._scan_fh, fp, inp.length(), on_chunk=self._checkpoint)
+                        if self._predict:
+                            self._channels_seen = self._z_seen = 0  # counts for the next block
                         inp.seek(res.pointer)
                         if res.found and (not res.hi_family or res.is_i):
                             self.pixelOffsets.pop()
